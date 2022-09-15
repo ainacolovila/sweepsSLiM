@@ -1,0 +1,81 @@
+// Keywords: hard sweep + adaptive mutations + output VCF
+// arguments to define: len, NN, outputPath
+
+initialize() {
+
+        // Define constants
+        defineConstant("L", len); // Length of the sequence
+        defineConstant("Ne", 1000); // Effectivee Population Size
+        defineConstant("Ns", 500); // Selection strength
+        defineConstant("mu", (0.001/(4*Ne))/3); // mutation rate
+        defineConstant("r", 0.002/(4*Ne)); // recombination rate
+        defineConstant("n", 200); // # haplotypes sampled
+        defineConstant("freq",  runif(1, 0.1,0.9)); // random freq [0.1,0.9]
+        defineConstant("mutPos",rdunif(1, 1, L-1)); // so we can retrieve the position
+        
+        // Declare Model
+        initializeSLiMOptions(nucleotideBased=T);
+        initializeAncestralNucleotides(randomNucleotides(L));
+        initializeMutationTypeNuc("m1", 0.5, "f", 0.0);
+        initializeMutationType("m2", 1.0, "f", Ns/Ne);  // introduce mutation
+        initializeGenomicElementType("g1", m1, 1.0, mmJukesCantor(mu));
+        initializeGenomicElement(g1, 0, L-1);
+        initializeRecombinationRate(r);
+}
+1 early() {
+        // save this run's identifier, used to save and restore
+        defineConstant("simID", getSeed());
+        sim.addSubpop("p1", Ne);
+}
+10000 late() {
+        // save the state of the simulation
+        sim.outputFull(outputPath + "slim_"+ NN + "_" + simID + ".txt");
+
+        // introduce the sweep mutation
+        target = sample(p1.genomes, 1); // meaning 1/N (?)
+        target.addNewDrawnMutation(m2, mutPos);
+        cat("Position " + mutPos + " is mutated\n");
+}
+10000: late() {
+
+        // Generate object mut
+        mut = sim.mutationsOfType(m2);
+
+        // If mutation is stablished
+        if (size(mut) == 1)
+        {
+                // Generate object mutFreq
+                mutFreq = sim.mutationFrequencies(NULL, mut);
+
+                // If frequency between 0.1 and 0.9
+                if (mutFreq > freq & mutFreq < 0.9)
+                {
+                        cat("Final freq: " + mutFreq + "\n");
+                        cat(simID + ": ESTABLISHED\n\n");
+
+                        g = p1.sampleIndividuals(asInteger(n/2)).genomes; // take 200 haploypes
+                        g.outputVCF(filePath = outputPath + "sample_" + NN + "_" + mutPos + ".vcf", simplifyNucleotides=T);
+
+                        sim.deregisterScriptBlock(self);
+                }
+        }
+        else
+        {
+                cat(simID + ": LOST – RESTARTING\n\n");
+
+                // go back to tick 200000
+                sim.readFromPopulationFile(outputPath + "slim_"+ NN + "_" + simID + ".txt");
+
+                // start a newly seeded run
+                setSeed(rdunif(1, 0, asInteger(2^62) - 1));
+
+                // re-introduce the sweep mutation
+                target = sample(p1.genomes, 1);
+                target.addNewDrawnMutation(m2, mutPos);
+                cat("Position " + mutPos + " is mutated\n");
+        }
+}
+
+11000 late(){
+                sim.simulationFinished();
+}
